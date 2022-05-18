@@ -1,0 +1,104 @@
+const express = require('express');
+const model = require('../dbmodel/model');
+const router = express.Router()
+const multer = require('multer');
+const { v4: uuidv4 } = require('uuid');
+const path = require('path');
+require('dotenv').config();
+
+
+// ALL APIS
+
+//1) add new movie 
+router.post('/addmovie', async (req, res) => {
+    console.log(req.body)
+    let storage = multer.diskStorage({
+        destination: (req, file, cb) => cb(null, 'uploads/videos') ,
+        filename: (req, file, cb) => {
+            const uniqueName = `${Date.now()}-${Math.round(Math.random() * 1E9)}${path.extname(file.originalname)}`;
+                  cb(null, uniqueName)
+        } ,
+    });
+
+    let videoupload = multer({ storage, limits:{ fileSize: 1000000 * 500 }, }).single('video');
+    try {
+        videoupload(req, res, async (err) => {
+            //check the movie name is exist or not
+            const movieExist =  await model.findOne({moviename:req.body.moviename})
+            if(movieExist)
+            {
+                return res.status(422).json({error:"Movie with this name previosly exist"});
+            }
+            //get the data 
+            const data = new model({
+                moviename: req.body.moviename,
+                directedby:req.body.directedby,
+                releaseyear: req.body.releaseyear,
+                budget:req.body.budget,
+                boxofficecollection:req.body.boxofficecollection,
+                filename: req.file.filename,
+                uuid: uuidv4(),
+                path: req.file.path,
+                size: req.file.size,
+            })
+            //save to database
+            const dataToSave = await data.save();
+            res.status(200).json(dataToSave);
+        })
+    }
+    catch (error) {
+        res.status(400).json({message: error.message})
+    }
+})
+
+// 2) create download link to get the video
+router.get('/:uuid',async (req, res) => {
+    const file = await model.findOne({ uuid: req.params.uuid});
+    // Link expired
+    if(!file) {
+        return res.status(410).json({ error: 'Link has been expired.'});
+    } 
+    const filePath = `${__dirname}/../${file.path}`;
+    res.download(filePath);
+});
+
+
+//3) Get all movie
+router.get('/getallmovie', async(req, res) => {
+    const allmovie= await model.find();
+    res.send(allmovie);
+})
+
+//4)Get only one movie by ID 
+router.get('/getone/:id', async (req, res) => {
+    const Data= await model.findById(req.params.id);
+    res.send(Data);
+})
+
+//pagination 
+router.get('/movie', async (req, res) => {
+    const page = parseInt(req.query.page)
+    const size = parseInt(req.query.size)
+    const start = (page - 1) * size
+    const end = page * size
+    const movie = {}
+    if (end < await model.countDocuments().exec()) {
+        movie.next = {
+            page: page + 1,
+            size: size
+        }
+    }
+    if (start > 0) {
+        movie.previous = {
+            page: page - 1,
+            size: size
+        }
+    }
+    try {
+        movie.result = await model.find().limit(size).skip(start).exec()
+        res.send(movie);
+    } catch (e) {
+        res.status(500).json({ message: e.message })
+    }
+})
+module.exports = router;
